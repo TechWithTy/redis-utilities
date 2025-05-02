@@ -2,27 +2,11 @@
 Redis configuration settings with timeout and performance parameters.
 """
 
-
 from redis.exceptions import ConnectionError, ResponseError, TimeoutError
 
 # Import settings
 from app.core.config import settings
 
-# Redis connection settings
-REDIS_HOST = getattr(settings, "REDIS_HOST", "localhost")
-REDIS_PORT = getattr(settings, "REDIS_PORT", 6379)
-REDIS_DB = getattr(settings, "REDIS_DB", 0)
-REDIS_PASSWORD = getattr(settings, "REDIS_PASSWORD", None)
-REDIS_CLUSTER = getattr(settings, "REDIS_CLUSTER", False)
-
-# Circuit breaker settings
-REDIS_FAILURE_THRESHOLD = getattr(settings, "REDIS_FAILURE_THRESHOLD", 3)
-REDIS_RECOVERY_TIMEOUT = getattr(settings, "REDIS_RECOVERY_TIMEOUT", 30)
-
-# Connection pooling settings
-REDIS_MAX_CONNECTIONS = getattr(settings, "REDIS_MAX_CONNECTIONS", 10)
-REDIS_SOCKET_TIMEOUT = getattr(settings, "REDIS_SOCKET_TIMEOUT", 5.0)
-REDIS_SOCKET_CONNECT_TIMEOUT = getattr(settings, "REDIS_SOCKET_CONNECT_TIMEOUT", 2.0)
 
 class RedisConfig:
     # Sharding configuration
@@ -30,21 +14,33 @@ class RedisConfig:
     REDIS_SHARD_OPS_LIMIT = 25000  # ops/second
     REDIS_SHARD_NODES = [
         {"host": "shard1", "port": 6379},
-        {"host": "shard2", "port": 6379}
+        {"host": "shard2", "port": 6379},
     ]
+    # Redis connection settings
+    REDIS_HOST = getattr(settings, "REDIS_HOST", "localhost")
+    REDIS_PORT = getattr(settings, "REDIS_PORT", 6379)
+    REDIS_DB = getattr(settings, "REDIS_DB", 0)
+    REDIS_PASSWORD = getattr(settings, "REDIS_PASSWORD", None)
+    REDIS_CLUSTER = getattr(settings, "REDIS_CLUSTER", False)
 
+    # Circuit breaker settings
+    REDIS_FAILURE_THRESHOLD = getattr(settings, "REDIS_FAILURE_THRESHOLD", 3)
+    REDIS_RECOVERY_TIMEOUT = getattr(settings, "REDIS_RECOVERY_TIMEOUT", 30)
+
+    # Connection pooling settings
+    REDIS_MAX_CONNECTIONS = getattr(settings, "REDIS_MAX_CONNECTIONS", 10)
+    REDIS_SOCKET_TIMEOUT = getattr(settings, "REDIS_SOCKET_TIMEOUT", 5.0)
+    REDIS_SOCKET_CONNECT_TIMEOUT = getattr(
+        settings, "REDIS_SOCKET_CONNECT_TIMEOUT", 2.0
+    )
     # Connection timeout in seconds (float)
     REDIS_TIMEOUT = 5.0
 
     # Circuit breaker settings
     CIRCUIT_BREAKER = {
-        'failure_threshold': 3,  # Failures before opening
-        'recovery_timeout': 30,  # Seconds to wait before attempting recovery
-        'expected_exceptions': (
-            ConnectionError,
-            TimeoutError,
-            ResponseError
-        )
+        "failure_threshold": 3,  # Failures before opening
+        "recovery_timeout": 30,  # Seconds to wait before attempting recovery
+        "expected_exceptions": (ConnectionError, TimeoutError, ResponseError),
     }
 
     # Monitoring settings

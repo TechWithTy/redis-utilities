@@ -24,7 +24,7 @@ from app.core.third_party_integrations.supabase_home.functions.auth import (
 logger = logging.getLogger(__name__)
 
 # Initialize Redis client
-redis_client = RedisClient()
+client = RedisClient()
 
 # Initialize auth service
 auth_service = SupabaseAuthService()
@@ -62,7 +62,7 @@ async def check_rate_limit(key: str, limit: int, window: int) -> bool:
     More accurate than fixed windows, better for burst protection
     """
     now = datetime.utcnow()
-    pipeline = redis_client.pipeline()
+    pipeline = client.pipeline()
 
     # Remove expired timestamps
     pipeline.zremrangebyscore(key, 0, (now - timedelta(seconds=window)).timestamp())
@@ -93,14 +93,14 @@ async def increment_rate_limit(identifier: str, endpoint: str, window: int = 60)
     key = f"rate_limit:{endpoint}:{identifier}"
 
     # Get or initialize counter
-    current = await redis_client.get(key)
+    current = await client.get(key)
     if current is None:
-        await redis_client.set(key, 1, ex=window)
+        await client.set(key, 1, ex=window)
         return 1
 
     # Increment and return
     count = int(current) + 1
-    await redis_client.set(key, count, ex=window)
+    await client.set(key, count, ex=window)
     return count
 
 
@@ -118,8 +118,8 @@ async def get_remaining_limit(
         }
     """
     key = f"rate_limit:{endpoint}:{identifier}"
-    current = int(await redis_client.get(key) or 0)
-    ttl = await redis_client.ttl(key)
+    current = int(await client.get(key) or 0)
+    ttl = await client.ttl(key)
 
     return {
         "limit": limit,
@@ -180,7 +180,7 @@ async def verify_and_limit(token: str, ip: str, endpoint: str, window: int = 360
             "updated_at": datetime.utcnow().isoformat(),
         }
 
-        await redis_client.hset(f"rate_meta:{user_id}", mapping=metadata)
+        await client.hset(f"rate_meta:{user_id}", mapping=metadata)
 
         if await check_rate_limit(rate_key, limit=limit, window=window):
             logger.warning(
@@ -261,5 +261,5 @@ async def service_rate_limit(
 
 
 async def init_cleanup():
-    await redis_client.eval(CLEANUP_SCRIPT, 0)
+    await client.eval(CLEANUP_SCRIPT, 0)
     # asyncio.create_task(run_weekly(init_cleanup))  # This line is commented out because run_weekly is not defined in the provided code

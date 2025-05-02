@@ -20,18 +20,18 @@ from prometheus_client import Counter, Gauge, Histogram
 from redis.asyncio import Redis, RedisCluster
 from redis.exceptions import RedisError, TimeoutError
 
-from app.core.redis.config import (
-    REDIS_CLUSTER,
-    REDIS_DB,
-    REDIS_FAILURE_THRESHOLD,
-    REDIS_HOST,
-    REDIS_MAX_CONNECTIONS,
-    REDIS_PASSWORD,
-    REDIS_PORT,
-    REDIS_RECOVERY_TIMEOUT,
-    REDIS_SOCKET_CONNECT_TIMEOUT,
-    REDIS_SOCKET_TIMEOUT,
-)
+from app.core.redis.config import RedisConfig
+
+REDIS_CLUSTER = RedisConfig.REDIS_CLUSTER
+REDIS_DB = RedisConfig.REDIS_DB
+REDIS_FAILURE_THRESHOLD = RedisConfig.REDIS_FAILURE_THRESHOLD
+REDIS_HOST = RedisConfig.REDIS_HOST
+REDIS_MAX_CONNECTIONS = RedisConfig.REDIS_MAX_CONNECTIONS
+REDIS_PASSWORD = RedisConfig.REDIS_PASSWORD
+REDIS_PORT = RedisConfig.REDIS_PORT
+REDIS_RECOVERY_TIMEOUT = RedisConfig.REDIS_RECOVERY_TIMEOUT
+REDIS_SOCKET_CONNECT_TIMEOUT = RedisConfig.REDIS_SOCKET_CONNECT_TIMEOUT
+REDIS_SOCKET_TIMEOUT = RedisConfig.REDIS_SOCKET_TIMEOUT
 
 logger = logging.getLogger(__name__)
 
