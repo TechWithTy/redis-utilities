@@ -3,15 +3,34 @@ Redis configuration settings with timeout and performance parameters.
 """
 
 
+from redis.exceptions import ConnectionError, ResponseError, TimeoutError
+
+
 class RedisConfig:
+    # Sharding configuration
+    REDIS_SHARD_SIZE = 25 * 1024 * 1024 * 1024  # 25GB
+    REDIS_SHARD_OPS_LIMIT = 25000  # ops/second
+    REDIS_SHARD_NODES = [
+        {"host": "shard1", "port": 6379},
+        {"host": "shard2", "port": 6379}
+    ]
+
     # Connection timeout in seconds (float)
     REDIS_TIMEOUT = 5.0
 
-    # Circuit breaker failure threshold (number of failures before opening)
-    REDIS_FAILURE_THRESHOLD = 3
+    # Circuit breaker settings
+    CIRCUIT_BREAKER = {
+        'failure_threshold': 3,  # Failures before opening
+        'recovery_timeout': 30,  # Seconds to wait before attempting recovery
+        'expected_exceptions': (
+            ConnectionError,
+            TimeoutError,
+            ResponseError
+        )
+    }
 
-    # Circuit breaker recovery timeout in seconds
-    REDIS_RECOVERY_TIMEOUT = 30
+    # Monitoring settings
+    METRICS_UPDATE_INTERVAL = 60  # Seconds between metrics updates
 
     # Connection pool settings
     REDIS_MAX_CONNECTIONS = 100

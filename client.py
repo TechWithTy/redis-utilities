@@ -5,15 +5,18 @@ Follows best practices for:
 - Connection pooling
 - Timeout handling
 - Error recovery
+- Sharding support
 """
 
 import json
 import logging
+import asyncio
 from typing import Any
 
 from circuitbreaker import circuit
 from opentelemetry import trace
 from opentelemetry.trace import StatusCode
+from prometheus_client import Gauge, Histogram, Counter
 from redis.asyncio import Redis, RedisCluster
 from redis.exceptions import RedisError, TimeoutError
 
@@ -27,6 +30,28 @@ DEFAULT_CONNECTION_TIMEOUT = 5.0
 DEFAULT_SOCKET_TIMEOUT = 10.0
 DEFAULT_COMMAND_TIMEOUT = 5.0
 
+# Prometheus metrics
+SHARD_SIZE_GAUGE = Gauge(
+    'redis_shard_size_bytes',
+    'Size of Redis shards in bytes',
+    ['shard']
+)
+SHARD_OPS_GAUGE = Gauge(
+    'redis_shard_ops_per_sec',
+    'Operations per second per shard',
+    ['shard']
+)
+REQUEST_DURATION = Histogram(
+    'redis_request_duration_seconds',
+    'Redis request duration',
+    ['operation', 'shard']
+)
+ERROR_COUNTER = Counter(
+    'redis_errors_total',
+    'Total Redis errors',
+    ['error_type', 'shard']
+)
+
 tracer = trace.get_tracer(__name__)
 
 
@@ -38,47 +63,64 @@ class RedisClient:
     - Connection pooling
     - Automatic reconnections
     - Timeout handling
+    - Sharding support
     """
 
     def __init__(self):
         """Initialize with automatic cluster detection"""
         self._client = None
         self._cluster_mode = getattr(settings, "REDIS_CLUSTER", False)
+        self._metrics_task = None
 
     async def get_client(self) -> Redis | RedisCluster:
         """
         Returns configured client based on settings
         - Auto-reconnects if needed
-        - Handles both cluster and standalone modes
+        - Supports both cluster and sharded modes
+        """
+        if self._cluster_mode:
+            return await self._get_cluster_client()
+        return await self._get_sharded_client()
+
+    async def _get_cluster_client(self) -> RedisCluster:
+        """
+        Get a cluster Redis client based on configuration
         """
         if not self._client:
-            if self._cluster_mode:
-                self._client = RedisCluster(
-                    host=settings.REDIS_HOST,
-                    port=settings.REDIS_PORT,
-                    socket_timeout=RedisConfig.REDIS_SOCKET_TIMEOUT,
-                    socket_connect_timeout=RedisConfig.REDIS_SOCKET_CONNECT_TIMEOUT,
-                    max_connections=RedisConfig.REDIS_MAX_CONNECTIONS
-                )
-            else:
-                self._client = Redis(
-                    host=settings.REDIS_HOST,
-                    port=settings.REDIS_PORT,
-                    socket_timeout=RedisConfig.REDIS_SOCKET_TIMEOUT,
-                    socket_connect_timeout=RedisConfig.REDIS_SOCKET_CONNECT_TIMEOUT,
-                    max_connections=RedisConfig.REDIS_MAX_CONNECTIONS
-                )
+            self._client = RedisCluster(
+                host=settings.REDIS_HOST,
+                port=settings.REDIS_PORT,
+                socket_timeout=RedisConfig.REDIS_SOCKET_TIMEOUT,
+                socket_connect_timeout=RedisConfig.REDIS_SOCKET_CONNECT_TIMEOUT,
+                max_connections=RedisConfig.REDIS_MAX_CONNECTIONS
+            )
         return self._client
+
+    async def _get_sharded_client(self) -> RedisCluster:
+        """
+        Get a sharded Redis client based on configuration
+        """
+        from redis.asyncio.cluster import RedisCluster
+        return RedisCluster(
+            startup_nodes=RedisConfig.REDIS_SHARD_NODES,
+            max_connections_per_node=RedisConfig.REDIS_MAX_CONNECTIONS,
+            socket_timeout=RedisConfig.REDIS_SOCKET_TIMEOUT,
+            socket_connect_timeout=RedisConfig.REDIS_SOCKET_CONNECT_TIMEOUT,
+            decode_responses=True
+        )
 
     async def shutdown(self):
         """Cleanly shutdown Redis client"""
         if self._client:
             await self._client.close()
             self._client = None
+        if self._metrics_task:
+            self._metrics_task.cancel()
 
     async def __aenter__(self):
         if not await self.is_healthy():
             raise ConnectionError("Redis connection failed")
+        self._metrics_task = asyncio.create_task(self._update_metrics())
 
     @circuit(
         failure_threshold=getattr(settings, "REDIS_FAILURE_THRESHOLD", 3),
@@ -139,6 +181,23 @@ class RedisClient:
             return await (await self.get_client()).ping()
         except (RedisError, TimeoutError):
             return False
+
+    async def _update_metrics(self):
+        """Periodically update Redis metrics"""
+        while True:
+            try:
+                client = await self.get_client()
+                info = await client.info('all')
+                
+                for shard, stats in info.items():
+                    SHARD_SIZE_GAUGE.labels(shard=shard).set(stats.get('used_memory', 0))
+                    SHARD_OPS_GAUGE.labels(shard=shard).set(stats.get('instantaneous_ops_per_sec', 0))
+                    
+            except Exception as e:
+                ERROR_COUNTER.labels(error_type=str(type(e).__name__), shard='unknown').inc()
+                logger.error(f"Metrics update failed: {e}")
+            
+            await asyncio.sleep(60)  # Update every minute
 
 
 # Singleton Redis client instance

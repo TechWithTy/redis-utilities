@@ -15,10 +15,10 @@ from functools import wraps
 from typing import Any, Optional
 
 from opentelemetry import trace
+from redis import Redis
 from redis.exceptions import RedisError, TimeoutError
 
 from app.core.redis.config import RedisConfig
-from app.core.redis.redis_client import RedisClient
 
 logger = logging.getLogger(__name__)
 
@@ -26,7 +26,7 @@ logger = logging.getLogger(__name__)
 class RedisCache:
     def __init__(self):
         """Initialize Redis connection"""
-        self._client = RedisClient()  # Uses built-in circuit breaking
+        self._client = Redis(host=RedisConfig.REDIS_HOST, port=RedisConfig.REDIS_PORT, db=RedisConfig.REDIS_DB)
         self.tracer = trace.get_tracer(__name__)
         self.stats = {"hits": 0, "misses": 0, "sets": 0, "deletes": 0}
 
@@ -34,9 +34,7 @@ class RedisCache:
         """Get cached value with stats tracking"""
         with self.tracer.start_as_current_span("redis_cache.get"):
             try:
-                value = await self._client.get(
-                    key
-                )  # Inherits client's circuit breaking
+                value = self._client.get(key)
                 if value:
                     self.stats["hits"] += 1
                     return value
@@ -56,7 +54,7 @@ class RedisCache:
         with self.tracer.start_as_current_span("redis_cache.set"):
             self.stats["sets"] += 1
             try:
-                return await self._client.set(key, value, ex=ttl)
+                return self._client.set(key, value, ex=ttl)
             except (RedisError, TimeoutError) as e:
                 logger.error(f"Cache set failed for key {key}: {str(e)}")
                 raise
@@ -64,7 +62,7 @@ class RedisCache:
     async def delete(self, key: str) -> int:
         """Delete cached value"""
         self.stats["deletes"] += 1
-        return await self._client.delete(key)
+        return self._client.delete(key)
 
     def get_stats(self) -> dict:
         """Get cache statistics"""
@@ -72,18 +70,17 @@ class RedisCache:
 
     async def flush_namespace(self, namespace: str) -> int:
         """Flush all keys in a namespace"""
-        keys = await (await self._client.get_client()).keys(f"{namespace}:*")
+        keys = self._client.keys(f"{namespace}:*")
         if keys:
-            return await self._client.delete(*keys)
+            return self._client.delete(*keys)
         return 0
 
     async def warm_cache(self, keys: list[str]):
         """Preload frequently accessed keys"""
-        pipeline = (await self._client.get_client()).pipeline()
+        pipeline = self._client.pipeline()
         for key in keys:
             pipeline.get(key)
-        await pipeline.execute()
-
+        pipeline.execute()
 
 # Global Redis cache instance with auto-recovery
 redis_cache = RedisCache()

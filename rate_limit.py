@@ -12,16 +12,19 @@ import time
 from datetime import datetime, timedelta
 from typing import Optional, Tuple
 
-import httpx
-from redis.exceptions import RedisError
-
-from app.core.redis.redis_client import client as redis
-from app.supabase_home.functions.auth import SupabaseAuthService
 from circuitbreaker import circuit
 from fastapi import HTTPException, status
 from prometheus_client import Counter, Gauge
 
+from app.core.redis.client import RedisClient
+from app.core.third_party_integrations.supabase_home.functions.auth import (
+    SupabaseAuthService,
+)
+
 logger = logging.getLogger(__name__)
+
+# Initialize Redis client
+redis_client = RedisClient()
 
 # Initialize auth service
 auth_service = SupabaseAuthService()
@@ -59,7 +62,6 @@ async def check_rate_limit(key: str, limit: int, window: int) -> bool:
     More accurate than fixed windows, better for burst protection
     """
     now = datetime.utcnow()
-    redis_client = await redis.get_client()
     pipeline = redis_client.pipeline()
 
     # Remove expired timestamps
@@ -91,14 +93,14 @@ async def increment_rate_limit(identifier: str, endpoint: str, window: int = 60)
     key = f"rate_limit:{endpoint}:{identifier}"
 
     # Get or initialize counter
-    current = await redis.get(key)
+    current = await redis_client.get(key)
     if current is None:
-        await redis.set(key, 1, ex=window)
+        await redis_client.set(key, 1, ex=window)
         return 1
 
     # Increment and return
     count = int(current) + 1
-    await redis.set(key, count, ex=window)
+    await redis_client.set(key, count, ex=window)
     return count
 
 
@@ -116,7 +118,6 @@ async def get_remaining_limit(
         }
     """
     key = f"rate_limit:{endpoint}:{identifier}"
-    redis_client = await redis.get_client()
     current = int(await redis_client.get(key) or 0)
     ttl = await redis_client.ttl(key)
 
@@ -136,6 +137,7 @@ RATE_LIMIT_CIRCUIT = {
     "failure_threshold": 3,
     "recovery_timeout": 60,
 }
+
 
 @circuit(
     failure_threshold=RATE_LIMIT_CIRCUIT["failure_threshold"],
@@ -178,7 +180,7 @@ async def verify_and_limit(token: str, ip: str, endpoint: str, window: int = 360
             "updated_at": datetime.utcnow().isoformat(),
         }
 
-        await redis.hset(f"rate_meta:{user_id}", mapping=metadata)
+        await redis_client.hset(f"rate_meta:{user_id}", mapping=metadata)
 
         if await check_rate_limit(rate_key, limit=limit, window=window):
             logger.warning(
@@ -259,5 +261,5 @@ async def service_rate_limit(
 
 
 async def init_cleanup():
-    await redis.eval(CLEANUP_SCRIPT, 0)
+    await redis_client.eval(CLEANUP_SCRIPT, 0)
     # asyncio.create_task(run_weekly(init_cleanup))  # This line is commented out because run_weekly is not defined in the provided code

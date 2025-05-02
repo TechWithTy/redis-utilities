@@ -9,8 +9,8 @@ from typing import Any, TypeVar
 
 from prometheus_client import Counter
 
+from app.core.redis.client import RedisClient
 from app.core.redis.config import RedisConfig
-from app.core.redis.redis_client import RedisClient
 
 logger = logging.getLogger(__name__)
 
@@ -76,9 +76,7 @@ def cache(
 
             logger.debug(f"Cache miss for {key}")
             result = await func(*args, **kwargs)
-            await client.set(
-                key, result, ex=ttl, timeout=RedisConfig.REDIS_TIMEOUT
-            )
+            await client.set(key, result, ex=ttl, timeout=RedisConfig.REDIS_TIMEOUT)
             return result
 
         return wrapper
