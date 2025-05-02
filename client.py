@@ -8,20 +8,30 @@ Follows best practices for:
 - Sharding support
 """
 
+import asyncio
 import json
 import logging
-import asyncio
 from typing import Any
 
 from circuitbreaker import circuit
 from opentelemetry import trace
 from opentelemetry.trace import StatusCode
-from prometheus_client import Gauge, Histogram, Counter
+from prometheus_client import Counter, Gauge, Histogram
 from redis.asyncio import Redis, RedisCluster
 from redis.exceptions import RedisError, TimeoutError
 
-from app.core.config import settings
-from app.core.redis.config import RedisConfig
+from app.core.redis.config import (
+    REDIS_CLUSTER,
+    REDIS_DB,
+    REDIS_FAILURE_THRESHOLD,
+    REDIS_HOST,
+    REDIS_MAX_CONNECTIONS,
+    REDIS_PASSWORD,
+    REDIS_PORT,
+    REDIS_RECOVERY_TIMEOUT,
+    REDIS_SOCKET_CONNECT_TIMEOUT,
+    REDIS_SOCKET_TIMEOUT,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -69,7 +79,7 @@ class RedisClient:
     def __init__(self):
         """Initialize with automatic cluster detection"""
         self._client = None
-        self._cluster_mode = getattr(settings, "REDIS_CLUSTER", False)
+        self._cluster_mode = REDIS_CLUSTER
         self._metrics_task = None
 
     async def get_client(self) -> Redis | RedisCluster:
@@ -83,29 +93,31 @@ class RedisClient:
         return await self._get_sharded_client()
 
     async def _get_cluster_client(self) -> RedisCluster:
-        """
-        Get a cluster Redis client based on configuration
-        """
+        """Get a cluster Redis client based on configuration"""
         if not self._client:
             self._client = RedisCluster(
-                host=settings.REDIS_HOST,
-                port=settings.REDIS_PORT,
-                socket_timeout=RedisConfig.REDIS_SOCKET_TIMEOUT,
-                socket_connect_timeout=RedisConfig.REDIS_SOCKET_CONNECT_TIMEOUT,
-                max_connections=RedisConfig.REDIS_MAX_CONNECTIONS
+                host=REDIS_HOST,
+                port=REDIS_PORT,
+                password=REDIS_PASSWORD,
+                db=REDIS_DB,
+                socket_timeout=REDIS_SOCKET_TIMEOUT,
+                socket_connect_timeout=REDIS_SOCKET_CONNECT_TIMEOUT,
+                max_connections=REDIS_MAX_CONNECTIONS
             )
         return self._client
 
     async def _get_sharded_client(self) -> RedisCluster:
-        """
-        Get a sharded Redis client based on configuration
-        """
+        """Get a Redis client configured for sharded mode"""
         from redis.asyncio.cluster import RedisCluster
         return RedisCluster(
-            startup_nodes=RedisConfig.REDIS_SHARD_NODES,
-            max_connections_per_node=RedisConfig.REDIS_MAX_CONNECTIONS,
-            socket_timeout=RedisConfig.REDIS_SOCKET_TIMEOUT,
-            socket_connect_timeout=RedisConfig.REDIS_SOCKET_CONNECT_TIMEOUT,
+            startup_nodes=[
+                {"host": REDIS_HOST, "port": REDIS_PORT}
+            ],
+            password=REDIS_PASSWORD,
+            db=REDIS_DB,
+            max_connections_per_node=REDIS_MAX_CONNECTIONS,
+            socket_timeout=REDIS_SOCKET_TIMEOUT,
+            socket_connect_timeout=REDIS_SOCKET_CONNECT_TIMEOUT,
             decode_responses=True
         )
 
@@ -123,8 +135,8 @@ class RedisClient:
         self._metrics_task = asyncio.create_task(self._update_metrics())
 
     @circuit(
-        failure_threshold=getattr(settings, "REDIS_FAILURE_THRESHOLD", 3),
-        recovery_timeout=getattr(settings, "REDIS_RECOVERY_TIMEOUT", 30),
+        failure_threshold=REDIS_FAILURE_THRESHOLD,
+        recovery_timeout=REDIS_RECOVERY_TIMEOUT,
         expected_exception=(RedisError, TimeoutError),
         fallback_function=lambda e: logger.warning(f"Circuit open: {str(e)}"),
     )
@@ -142,8 +154,8 @@ class RedisClient:
                 raise
 
     @circuit(
-        failure_threshold=getattr(settings, "REDIS_FAILURE_THRESHOLD", 3),
-        recovery_timeout=getattr(settings, "REDIS_RECOVERY_TIMEOUT", 30),
+        failure_threshold=REDIS_FAILURE_THRESHOLD,
+        recovery_timeout=REDIS_RECOVERY_TIMEOUT,
         expected_exception=(RedisError, TimeoutError),
     )
     async def set(
