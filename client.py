@@ -211,6 +211,59 @@ class RedisClient:
             
             await asyncio.sleep(60)  # Update every minute
 
+    async def incr(self, key: str, timeout: float = DEFAULT_COMMAND_TIMEOUT) -> int:
+        """Increment a key's integer value by 1. Returns new value."""
+        with tracer.start_as_current_span("redis.incr") as span:
+            span.set_attribute("redis.key", key)
+            try:
+                value = await (await self.get_client()).incr(key)
+                span.set_status(StatusCode.OK)
+                return value
+            except Exception as e:
+                span.record_exception(e)
+                span.set_status(StatusCode.ERROR)
+                raise
+
+    async def expire(self, key: str, ex: int, timeout: float = DEFAULT_COMMAND_TIMEOUT) -> bool:
+        """Set a key's time to live in seconds."""
+        with tracer.start_as_current_span("redis.expire") as span:
+            span.set_attribute("redis.key", key)
+            span.set_attribute("redis.ttl", ex)
+            try:
+                result = await (await self.get_client()).expire(key, ex)
+                span.set_status(StatusCode.OK)
+                return result
+            except Exception as e:
+                span.record_exception(e)
+                span.set_status(StatusCode.ERROR)
+                raise
+
+    async def ttl(self, key: str, timeout: float = DEFAULT_COMMAND_TIMEOUT) -> int:
+        """Get the time to live (in seconds) of a key."""
+        with tracer.start_as_current_span("redis.ttl") as span:
+            span.set_attribute("redis.key", key)
+            try:
+                value = await (await self.get_client()).ttl(key)
+                span.set_status(StatusCode.OK)
+                return value
+            except Exception as e:
+                span.record_exception(e)
+                span.set_status(StatusCode.ERROR)
+                raise
+
+    async def exists(self, key: str, timeout: float = DEFAULT_COMMAND_TIMEOUT) -> bool:
+        """Check if a key exists in Redis (returns True if exists)."""
+        with tracer.start_as_current_span("redis.exists") as span:
+            span.set_attribute("redis.key", key)
+            try:
+                exists = await (await self.get_client()).exists(key)
+                span.set_status(StatusCode.OK)
+                return exists == 1
+            except Exception as e:
+                span.record_exception(e)
+                span.set_status(StatusCode.ERROR)
+                raise
+
 
 # Singleton Redis client instance
 client = RedisClient()
@@ -222,3 +275,7 @@ get = client.get
 set = client.set
 delete = client.delete
 is_healthy = client.is_healthy
+incr = client.incr
+expire = client.expire
+ttl = client.ttl
+exists = client.exists
