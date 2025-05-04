@@ -18,6 +18,12 @@ from opentelemetry import trace
 from redis import Redis
 from redis.exceptions import RedisError, TimeoutError
 
+from app.core.prometheus.metrics import (
+    PULSAR_CACHE_DELETES,
+    PULSAR_CACHE_HITS,
+    PULSAR_CACHE_MISSES,
+    PULSAR_CACHE_SETS,
+)
 from app.core.redis.config import RedisConfig
 
 logger = logging.getLogger(__name__)
@@ -37,8 +43,10 @@ class RedisCache:
                 value = self._client.get(key)
                 if value:
                     self.stats["hits"] += 1
+                    PULSAR_CACHE_HITS.inc()
                     return value
                 self.stats["misses"] += 1
+                PULSAR_CACHE_MISSES.inc()
                 return None
             except (RedisError, TimeoutError) as e:
                 logger.error(f"Cache get failed for key {key}: {str(e)}")
@@ -53,6 +61,7 @@ class RedisCache:
             ttl = RedisConfig.REDIS_CACHE_TTL
         with self.tracer.start_as_current_span("redis_cache.set"):
             self.stats["sets"] += 1
+            PULSAR_CACHE_SETS.inc()
             try:
                 return self._client.set(key, value, ex=ttl)
             except (RedisError, TimeoutError) as e:
@@ -62,6 +71,7 @@ class RedisCache:
     async def delete(self, key: str) -> int:
         """Delete cached value"""
         self.stats["deletes"] += 1
+        PULSAR_CACHE_DELETES.inc()
         return self._client.delete(key)
 
     def get_stats(self) -> dict:
@@ -72,7 +82,10 @@ class RedisCache:
         """Flush all keys in a namespace"""
         keys = self._client.keys(f"{namespace}:*")
         if keys:
-            return self._client.delete(*keys)
+            deleted = self._client.delete(*keys)
+            self.stats["deletes"] += deleted
+            PULSAR_CACHE_DELETES.inc(deleted)
+            return deleted
         return 0
 
     async def warm_cache(self, keys: list[str]):
