@@ -32,6 +32,15 @@ REDIS_PORT = RedisConfig.REDIS_PORT
 REDIS_RECOVERY_TIMEOUT = RedisConfig.REDIS_RECOVERY_TIMEOUT
 REDIS_SOCKET_CONNECT_TIMEOUT = RedisConfig.REDIS_SOCKET_CONNECT_TIMEOUT
 REDIS_SOCKET_TIMEOUT = RedisConfig.REDIS_SOCKET_TIMEOUT
+# Security and advanced config
+REDIS_SSL = getattr(RedisConfig, "REDIS_SSL", False)
+REDIS_SSL_CERT_REQS = getattr(RedisConfig, "REDIS_SSL_CERT_REQS", None)
+REDIS_SSL_CA_CERTS = getattr(RedisConfig, "REDIS_SSL_CA_CERTS", None)
+REDIS_SSL_KEYFILE = getattr(RedisConfig, "REDIS_SSL_KEYFILE", None)
+REDIS_SSL_CERTFILE = getattr(RedisConfig, "REDIS_SSL_CERTFILE", None)
+REDIS_PROTOCOL = getattr(RedisConfig, "REDIS_PROTOCOL", 2)
+REDIS_USERNAME = getattr(RedisConfig, "REDIS_USERNAME", None)
+REDIS_URL = getattr(RedisConfig, "REDIS_URL", None)
 
 logger = logging.getLogger(__name__)
 
@@ -95,26 +104,74 @@ class RedisClient:
     async def _get_cluster_client(self) -> RedisCluster:
         """Get a cluster Redis client based on configuration"""
         if not self._client:
-            self._client = RedisCluster(
-                host=REDIS_HOST,
-                port=REDIS_PORT,
-                password=REDIS_PASSWORD,
-                db=REDIS_DB,
-                socket_timeout=REDIS_SOCKET_TIMEOUT,
-                socket_connect_timeout=REDIS_SOCKET_CONNECT_TIMEOUT,
-                max_connections=REDIS_MAX_CONNECTIONS
-            )
+            if REDIS_URL:
+                self._client = RedisCluster.from_url(
+                    REDIS_URL,
+                    ssl=REDIS_SSL,
+                    ssl_cert_reqs=REDIS_SSL_CERT_REQS,
+                    ssl_ca_certs=REDIS_SSL_CA_CERTS,
+                    ssl_keyfile=REDIS_SSL_KEYFILE,
+                    ssl_certfile=REDIS_SSL_CERTFILE,
+                    protocol=REDIS_PROTOCOL,
+                    username=REDIS_USERNAME,
+                    password=REDIS_PASSWORD,
+                    db=REDIS_DB,
+                    max_connections=REDIS_MAX_CONNECTIONS,
+                    socket_timeout=REDIS_SOCKET_TIMEOUT,
+                    socket_connect_timeout=REDIS_SOCKET_CONNECT_TIMEOUT,
+                )
+            else:
+                self._client = RedisCluster(
+                    host=REDIS_HOST,
+                    port=REDIS_PORT,
+                    username=REDIS_USERNAME,
+                    password=REDIS_PASSWORD,
+                    db=REDIS_DB,
+                    ssl=REDIS_SSL,
+                    ssl_cert_reqs=REDIS_SSL_CERT_REQS,
+                    ssl_ca_certs=REDIS_SSL_CA_CERTS,
+                    ssl_keyfile=REDIS_SSL_KEYFILE,
+                    ssl_certfile=REDIS_SSL_CERTFILE,
+                    protocol=REDIS_PROTOCOL,
+                    max_connections=REDIS_MAX_CONNECTIONS,
+                    socket_timeout=REDIS_SOCKET_TIMEOUT,
+                    socket_connect_timeout=REDIS_SOCKET_CONNECT_TIMEOUT,
+                )
         return self._client
 
     async def _get_sharded_client(self) -> RedisCluster:
         """Get a Redis client configured for sharded mode"""
         from redis.asyncio.cluster import RedisCluster
+        if REDIS_URL:
+            return RedisCluster.from_url(
+                REDIS_URL,
+                ssl=REDIS_SSL,
+                ssl_cert_reqs=REDIS_SSL_CERT_REQS,
+                ssl_ca_certs=REDIS_SSL_CA_CERTS,
+                ssl_keyfile=REDIS_SSL_KEYFILE,
+                ssl_certfile=REDIS_SSL_CERTFILE,
+                protocol=REDIS_PROTOCOL,
+                username=REDIS_USERNAME,
+                password=REDIS_PASSWORD,
+                db=REDIS_DB,
+                max_connections=REDIS_MAX_CONNECTIONS,
+                socket_timeout=REDIS_SOCKET_TIMEOUT,
+                socket_connect_timeout=REDIS_SOCKET_CONNECT_TIMEOUT,
+                decode_responses=True
+            )
         return RedisCluster(
             startup_nodes=[
                 {"host": REDIS_HOST, "port": REDIS_PORT}
             ],
+            username=REDIS_USERNAME,
             password=REDIS_PASSWORD,
             db=REDIS_DB,
+            ssl=REDIS_SSL,
+            ssl_cert_reqs=REDIS_SSL_CERT_REQS,
+            ssl_ca_certs=REDIS_SSL_CA_CERTS,
+            ssl_keyfile=REDIS_SSL_KEYFILE,
+            ssl_certfile=REDIS_SSL_CERTFILE,
+            protocol=REDIS_PROTOCOL,
             max_connections_per_node=REDIS_MAX_CONNECTIONS,
             socket_timeout=REDIS_SOCKET_TIMEOUT,
             socket_connect_timeout=REDIS_SOCKET_CONNECT_TIMEOUT,

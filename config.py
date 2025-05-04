@@ -68,3 +68,18 @@ class RedisConfig:
     # Rate limiting settings
     REDIS_RATE_LIMIT_WINDOW = 60  # seconds
     REDIS_RATE_LIMIT_MAX_REQUESTS = 100
+
+    # SSL/TLS
+    REDIS_SSL = getattr(settings, "REDIS_SSL", False)
+    REDIS_SSL_CERT_REQS = getattr(
+        settings, "REDIS_SSL_CERT_REQS", None
+    )  # e.g., 'required', 'optional', 'none'
+    REDIS_SSL_CA_CERTS = getattr(settings, "REDIS_SSL_CA_CERTS", None)
+    REDIS_SSL_KEYFILE = getattr(settings, "REDIS_SSL_KEYFILE", None)
+    REDIS_SSL_CERTFILE = getattr(settings, "REDIS_SSL_CERTFILE", None)
+    # RESP3
+    REDIS_PROTOCOL = getattr(settings, "REDIS_PROTOCOL", 2)  # 2 or 3
+    # Advanced Auth
+    REDIS_USERNAME = getattr(settings, "REDIS_USERNAME", None)
+    # URL-based config
+    REDIS_URL = getattr(settings, "REDIS_URL", None)
