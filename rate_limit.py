@@ -17,7 +17,7 @@ from fastapi import HTTPException, status
 from prometheus_client import Counter, Gauge
 
 from app.core.redis.client import RedisClient
-from app.core.third_party_integrations.supabase_home.functions.auth import (
+from app.core.third_party_integrations.supabase_home.sdk.auth import (
     SupabaseAuthService,
 )
 
