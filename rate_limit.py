@@ -16,27 +16,42 @@ from circuitbreaker import circuit
 from fastapi import HTTPException, status
 from prometheus_client import Counter, Gauge
 
+# Prometheus Metrics - Singleton getters to avoid duplicate registration
+
+def get_rate_limit_requests():
+    if not hasattr(get_rate_limit_requests, "_metric"):
+        get_rate_limit_requests._metric = Counter(
+            "rate_limit_requests_total", "Total rate limit requests", ["endpoint", "status"]
+        )
+    return get_rate_limit_requests._metric
+
+def get_rate_limit_gauge():
+    if not hasattr(get_rate_limit_gauge, "_metric"):
+        get_rate_limit_gauge._metric = Gauge(
+            "rate_limit_active_requests", "Currently active rate-limited requests", ["endpoint"]
+        )
+    return get_rate_limit_gauge._metric
+
 from app.core.redis.client import RedisClient
 from app.core.third_party_integrations.supabase_home.sdk.auth import (
     SupabaseAuthService,
 )
+from app.core.third_party_integrations.supabase_home._client import get_supabase_client
 
 logger = logging.getLogger(__name__)
 
 # Initialize Redis client
 client = RedisClient()
 
-# Initialize auth service
-auth_service = SupabaseAuthService()
+# Async getter for auth service
+auth_service = None
 
-# Prometheus Metrics
-RATE_LIMIT_REQUESTS = Counter(
-    "rate_limit_requests_total", "Total rate limit requests", ["endpoint", "status"]
-)
-
-RATE_LIMIT_GAUGE = Gauge(
-    "rate_limit_active_requests", "Currently active rate-limited requests", ["endpoint"]
-)
+async def get_auth_service():
+    global auth_service
+    if auth_service is None:
+        client = await get_supabase_client()
+        auth_service = SupabaseAuthService(client)
+    return auth_service
 
 
 # Default rate limit
@@ -149,7 +164,7 @@ async def verify_and_limit(token: str, ip: str, endpoint: str, window: int = 360
     - User-level rate tracking
     - Composite keys for granular control
     """
-    RATE_LIMIT_GAUGE.labels(endpoint=endpoint).inc()
+    get_rate_limit_gauge().labels(endpoint=endpoint).inc()
 
     try:
         # Verify JWT with detailed logging
@@ -158,7 +173,7 @@ async def verify_and_limit(token: str, ip: str, endpoint: str, window: int = 360
                 "Invalid JWT token",
                 extra={"token": token[:8] + "...", "endpoint": endpoint},
             )
-            RATE_LIMIT_REQUESTS.labels(endpoint=endpoint, status="unauthorized").inc()
+            get_rate_limit_requests().labels(endpoint=endpoint, status="unauthorized").inc()
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials"
             )
@@ -192,14 +207,14 @@ async def verify_and_limit(token: str, ip: str, endpoint: str, window: int = 360
                     "limit": limit,
                 },
             )
-            RATE_LIMIT_REQUESTS.labels(endpoint=endpoint, status="limited").inc()
+            get_rate_limit_requests().labels(endpoint=endpoint, status="limited").inc()
             raise HTTPException(
                 status_code=status.HTTP_429_TOO_MANY_REQUESTS,
                 detail=f"Rate limit exceeded. Try again in {window} seconds",
             )
 
         await increment_rate_limit(rate_key, endpoint, window=window)
-        RATE_LIMIT_REQUESTS.labels(endpoint=endpoint, status="allowed").inc()
+        get_rate_limit_requests().labels(endpoint=endpoint, status="allowed").inc()
         return user_id
 
     except Exception as e:
@@ -208,11 +223,11 @@ async def verify_and_limit(token: str, ip: str, endpoint: str, window: int = 360
             extra={"error": str(e), "stack_trace": True},
             exc_info=True,
         )
-        RATE_LIMIT_REQUESTS.labels(endpoint=endpoint, status="error").inc()
+        get_rate_limit_requests().labels(endpoint=endpoint, status="error").inc()
         # Fail open during Redis outages
         return user_id
     finally:
-        RATE_LIMIT_GAUGE.labels(endpoint=endpoint).dec()
+        get_rate_limit_gauge().labels(endpoint=endpoint).dec()
 
 
 async def service_rate_limit(
@@ -230,7 +245,7 @@ async def service_rate_limit(
     Returns:
         bool: True if request is allowed, False if rate limited
     """
-    RATE_LIMIT_GAUGE.labels(endpoint=endpoint).inc()
+    get_rate_limit_gauge().labels(endpoint=endpoint).inc()
 
     try:
         rate_key = f"service_rate:{key}"
@@ -240,11 +255,11 @@ async def service_rate_limit(
                 "Service rate limit exceeded",
                 extra={"key": key, "endpoint": endpoint, "limit": limit},
             )
-            RATE_LIMIT_REQUESTS.labels(endpoint=endpoint, status="limited").inc()
+            get_rate_limit_requests().labels(endpoint=endpoint, status="limited").inc()
             return False
 
         await increment_rate_limit(rate_key, endpoint, window=window)
-        RATE_LIMIT_REQUESTS.labels(endpoint=endpoint, status="allowed").inc()
+        get_rate_limit_requests().labels(endpoint=endpoint, status="allowed").inc()
         return True
 
     except Exception as e:
@@ -253,11 +268,11 @@ async def service_rate_limit(
             extra={"error": str(e), "stack_trace": True},
             exc_info=True,
         )
-        RATE_LIMIT_REQUESTS.labels(endpoint=endpoint, status="error").inc()
+        get_rate_limit_requests().labels(endpoint=endpoint, status="error").inc()
         # Fail open during Redis outages
         return True
     finally:
-        RATE_LIMIT_GAUGE.labels(endpoint=endpoint).dec()
+        get_rate_limit_gauge().labels(endpoint=endpoint).dec()
 
 
 async def init_cleanup():

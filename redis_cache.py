@@ -19,10 +19,10 @@ from redis import Redis
 from redis.exceptions import RedisError, TimeoutError
 
 from app.core.prometheus.metrics import (
-    PULSAR_CACHE_DELETES,
-    PULSAR_CACHE_HITS,
-    PULSAR_CACHE_MISSES,
-    PULSAR_CACHE_SETS,
+    get_redis_cache_deletes,
+    get_redis_cache_hits,
+    get_redis_cache_misses,
+    get_redis_cache_sets,
 )
 from app.core.redis.config import RedisConfig
 
@@ -30,6 +30,32 @@ logger = logging.getLogger(__name__)
 
 
 class RedisCache:
+    async def get_or_set(self, key: str, value_fn, ttl: int | None = None):
+        """
+        Atomically get or set a cache value. If the key is missing, compute and set it.
+        Args:
+            key (str): The cache key
+            value_fn (Callable): Function to compute value if key is missing
+            ttl (int | None): Time-to-live for the cache entry
+        Returns:
+            The cached or computed value
+        """
+        try:
+            value = await self.get(key)
+            if value is not None:
+                self.stats["hits"] += 1
+                get_redis_cache_hits().inc()
+                return value
+            # Compute value and cache it
+            value = await value_fn() if callable(value_fn) and hasattr(value_fn, "__call__") else value_fn
+            await self.set(key, value, ttl=ttl)
+            self.stats["sets"] += 1
+            get_redis_cache_sets().inc()
+            return value
+        except Exception as e:
+            logger.error(f"get_or_set failed for key {key}: {str(e)}")
+            raise
+
     def __init__(self):
         """Initialize Redis connection"""
         self._client = Redis(host=RedisConfig.REDIS_HOST, port=RedisConfig.REDIS_PORT, db=RedisConfig.REDIS_DB)
@@ -43,16 +69,16 @@ class RedisCache:
                 value = self._client.get(key)
                 if value:
                     self.stats["hits"] += 1
-                    PULSAR_CACHE_HITS.inc()
+                    get_redis_cache_hits().inc()
                     return value
                 self.stats["misses"] += 1
-                PULSAR_CACHE_MISSES.inc()
+                get_redis_cache_misses().inc()
                 return None
             except (RedisError, TimeoutError) as e:
                 logger.error(f"Cache get failed for key {key}: {str(e)}")
                 raise
 
-    async def set(self, key: str, value: Any, ttl: int | None = None) -> bool:
+    async def set(self, key: str, value: Any, ttl: int | None) -> bool:
         """
         Set a value in Redis with optional TTL.
         If no TTL is provided, uses default from config.
@@ -61,7 +87,7 @@ class RedisCache:
             ttl = RedisConfig.REDIS_CACHE_TTL
         with self.tracer.start_as_current_span("redis_cache.set"):
             self.stats["sets"] += 1
-            PULSAR_CACHE_SETS.inc()
+            get_redis_cache_sets().inc()
             try:
                 return self._client.set(key, value, ex=ttl)
             except (RedisError, TimeoutError) as e:
@@ -71,7 +97,7 @@ class RedisCache:
     async def delete(self, key: str) -> int:
         """Delete cached value"""
         self.stats["deletes"] += 1
-        PULSAR_CACHE_DELETES.inc()
+        get_redis_cache_deletes().inc()
         return self._client.delete(key)
 
     def get_stats(self) -> dict:
@@ -84,7 +110,7 @@ class RedisCache:
         if keys:
             deleted = self._client.delete(*keys)
             self.stats["deletes"] += deleted
-            PULSAR_CACHE_DELETES.inc(deleted)
+            get_redis_cache_deletes().inc(deleted)
             return deleted
         return 0
 
@@ -148,7 +174,7 @@ async def invalidate_cache(key: str) -> bool:
 
 
 async def get_or_set_cache(
-    key: str, func: Callable[[], Any], expire_seconds: int | None = None
+    key: str, func: Callable[[], Any], expire_seconds: int | None
 ) -> Any:
     """
     Get a value from Redis, or compute and store it if not found.
@@ -173,7 +199,7 @@ async def get_or_set_cache(
         raise
 
 
-def cache_result(expire_seconds: int | None = None, key_prefix: str = ""):
+def cache_result(expire_seconds: int | None, key_prefix: str = ""):
     """
     Decorator that caches the result of a function based on its arguments using Redis.
 

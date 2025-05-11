@@ -244,7 +244,7 @@ Designing a flexible and scalable Redis schema is the key to unlocking Redis' fu
 
 1. Use Appropriate Data Types
 
-Redis offers various data types like String, List, Set, Sorted Set, and Hashes. Each data type supports unique operations, making them best suited for specific use cases. Understanding these data types and their associated operations is essential for an efficient Redis schema. For example, Hashes are more efficient than Strings for storing multi-field objects.
+Redis offers various data types like String, list, Set, Sorted Set, and Hashes. Each data type supports unique operations, making them best suited for specific use cases. Understanding these data types and their associated operations is essential for an efficient Redis schema. For example, Hashes are more efficient than Strings for storing multi-field objects.
 
 # Using Hashes
 

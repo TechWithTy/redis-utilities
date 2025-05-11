@@ -5,15 +5,16 @@ Production-grade Redis sharding tests with:
 - Edge case testing
 - Monitoring integration
 """
-import pytest
-import logging
-from unittest.mock import patch, MagicMock
-from datetime import datetime
 import asyncio
+import logging
+from datetime import datetime
+from unittest.mock import MagicMock, patch
 
+import pytest
+
+from app.core.redis.metrics import record_metrics
 from app.core.redis.client import RedisClient
 from app.core.redis.config import RedisConfig
-from app.core.monitoring.metrics import record_metrics
 
 logger = logging.getLogger(__name__)
 
