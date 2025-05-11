@@ -88,7 +88,7 @@ end
 """
 
 @circuit(failure_threshold=3, recovery_timeout=60)
-async def check_rate_limit(key: str, limit: int, window: int) -> bool:
+async def check_rate_limit(key: str, limit: int, window: int, redis_client=None) -> bool:
     """
     Atomic sliding window rate limiting using Redis Lua script for concurrency safety.
     More accurate than fixed windows, better for burst protection.
@@ -104,7 +104,10 @@ async def check_rate_limit(key: str, limit: int, window: int) -> bool:
     if not isinstance(window, int) or window <= 0:
         raise ValueError("Window must be a positive integer (seconds)")
 
-    redis_instance = await client.get_client()  # Ensure Redis is initialized
+    if redis_client is not None:
+        redis_instance = redis_client
+    else:
+        redis_instance = await client.get_client()  # Ensure Redis is initialized
     if redis_instance is None:
         logger.error("Redis unavailable in check_rate_limit: fail-closed")
         return False
