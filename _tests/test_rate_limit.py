@@ -25,7 +25,7 @@ from unittest.mock import patch
 @patch("app.core.redis.rate_limit.get_rate_limit_requests")
 @patch("app.core.redis.rate_limit.get_rate_limit_gauge")
 @pytest.mark.asyncio
-async def test_burst_handling(mock_gauge, mock_requests):
+async def test_burst_handling(mock_gauge, mock_requests, redis_client):
     """
     Verify burst traffic handling with Prometheus metrics. Should allow 15 requests and reject 5 when limit=15.
     Uses a fresh Redis key for test isolation.
@@ -37,10 +37,7 @@ async def test_burst_handling(mock_gauge, mock_requests):
     start_time = datetime.now()
 
     # Ensure the key is clean before test
-    from app.core.redis import rate_limit
-    redis_instance = await rate_limit.client.get_client()
-    if redis_instance:
-        await redis_instance.delete(identifier)
+    await redis_client.delete(identifier)
 
     try:
         # Simulate burst traffic with micro-jitter (0-2ms random sleep)
@@ -68,27 +65,24 @@ async def test_burst_handling(mock_gauge, mock_requests):
 
 
 @pytest.mark.asyncio
-async def test_distributed_consistency():
-    """Test rate limiting works across shards with failover"""
+async def test_distributed_consistency_failover():
+    """Test rate limiting failover when Redis client is unavailable (fail-closed)"""
     identifier = "dist_id"
-
-    try:
-        # Test with shard failure
-        with patch(
-            "app.core.redis.client.RedisClient.get_client"
-        ) as mock_get_client:
-            mock_get_client.return_value = None
-            assert await check_rate_limit(identifier, 5, 60) is False
-
-        # Pre-fill the window to hit the rate limit
-        for _ in range(5):
-            await check_rate_limit(identifier, 5, 60)
-        # Now the next call should be blocked
+    with patch("app.core.redis.client.RedisClient.get_client") as mock_get_client:
+        mock_get_client.return_value = None
         assert await check_rate_limit(identifier, 5, 60) is False
 
-    except Exception as e:
-        logger.error(f"Distributed consistency test failed: {e}")
-        raise
+@pytest.mark.asyncio
+async def test_distributed_consistency_normal(redis_client):
+    """Test distributed rate limiting works under normal conditions"""
+    identifier = "dist_id"
+    # Ensure the key is clean before test
+    await redis_client.delete(identifier)
+    # Pre-fill the window to hit the rate limit
+    for _ in range(5):
+        await check_rate_limit(identifier, 5, 60)
+    # Now the next call should be blocked
+    assert await check_rate_limit(identifier, 5, 60) is False
 
 
 from app.core.redis import rate_limit

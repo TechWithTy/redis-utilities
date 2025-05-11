@@ -18,7 +18,7 @@ logger = logging.getLogger(__name__)
 
 
 @pytest.mark.asyncio
-async def test_failover_scenarios():
+async def test_failover_scenarios(redis_client):
     """Test performance during failover scenarios"""
     client = RedisClient()
 
@@ -35,7 +35,7 @@ async def test_failover_scenarios():
 
 
 @pytest.mark.asyncio
-async def test_circuit_breaker_performance():
+async def test_circuit_breaker_performance(redis_client):
     """Test performance with circuit breaker engaged"""
     client = RedisClient()
 
@@ -51,7 +51,7 @@ async def test_circuit_breaker_performance():
 
 
 @pytest.mark.asyncio
-async def test_throughput_under_stress():
+async def test_throughput_under_stress(redis_client):
     """Measure throughput under simulated stress"""
     import os  # Ensure import exists for env var
     client = RedisClient()
@@ -73,7 +73,7 @@ async def test_throughput_under_stress():
 
 
 @pytest.mark.asyncio
-async def test_latency_distribution():
+async def test_latency_distribution(redis_client):
     """Measure latency distribution under load"""
     client = RedisClient()
     latencies = []
