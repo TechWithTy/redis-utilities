@@ -3,6 +3,61 @@ Shared pytest fixtures and configuration for Redis tests
 """
 
 import asyncio
+import time
+import logging
+import socket
+import subprocess
+import pytest
+from app.core.redis.config import RedisConfig
+
+@pytest.fixture(scope="session", autouse=True)
+def ensure_redis_running():
+    """
+    Ensure a local Redis server is running for tests. If not, start it with Docker Compose.
+    Make sure your docker-compose file exposes port 6379:6379 for the redis service.
+    """
+    host = getattr(RedisConfig, "REDIS_HOST", "localhost")
+    port = getattr(RedisConfig, "REDIS_PORT", 6379)
+    max_attempts = 30  # Increased attempts for slow startup
+    wait_seconds = 2   # Increased wait time per attempt
+
+    def redis_available():
+        try:
+            with socket.create_connection((host, port), timeout=2):
+                return True
+        except OSError as e:
+            logging.info(f"Redis connection failed: {e}")
+            return False
+
+    if not redis_available():
+        logging.info(f"Redis not running at {host}:{port}, attempting to start with Docker Compose...")
+        try:
+            result = subprocess.run([
+                "docker-compose",
+                "-f",
+                "app/core/redis/docker/docker-compose.redis.yml",
+                "up",
+                "-d"
+            ], capture_output=True, text=True)
+            logging.info(f"Docker Compose output: {result.stdout}\n{result.stderr}")
+        except Exception as e:
+            logging.error(f"Could not start Redis with Docker Compose: {e}")
+            raise
+        # Wait for Redis to become available
+        for attempt in range(1, max_attempts + 1):
+            if redis_available():
+                logging.info(f"Redis became available after {attempt} attempts.")
+                break
+            logging.info(f"Waiting for Redis... attempt {attempt}/{max_attempts}")
+            time.sleep(wait_seconds)
+        else:
+            raise RuntimeError(f"Redis did not start after {max_attempts * wait_seconds} seconds.\n"
+                               f"Check that your docker-compose file exposes port 6379:6379.")
+    yield
+
+# The old ensure_redis_container fixture is now redundant and removed for clarity.
+
+import asyncio
 import subprocess
 import sys
 import time
@@ -24,7 +79,14 @@ def ensure_redis_container():
     """
     import logging
     import os
-    docker_compose = os.path.join(os.path.dirname(__file__), '../docker/docker-compose.redis.yml')
+    # ! Use minimal local Docker Compose file for Redis in tests
+    # This avoids password/persistence issues and is CI/dev safe
+    compose_file = os.path.join(
+        os.path.dirname(__file__),
+        "..",
+        "docker",
+        "docker-compose.local.yml",
+    )
     container_name = "redis"
     try:
         # Check if container is running
@@ -32,7 +94,7 @@ def ensure_redis_container():
         running = container_name in ps.stdout
         if not running:
             logging.info("[pytest] Redis container not running, starting via docker-compose...")
-            subprocess.run(["docker-compose", "-f", docker_compose, "up", "-d", "redis"], check=True)
+            subprocess.run(["docker-compose", "-f", compose_file, "up", "-d", "redis"], check=True)
             # Wait for container to be healthy (ping)
             for _ in range(20):
                 health = subprocess.run(["docker", "inspect", "--format", "{{.State.Health.Status}}", container_name], capture_output=True, text=True)
@@ -47,15 +109,36 @@ def ensure_redis_container():
         logging.warning(f"[pytest] Could not ensure Redis container is running: {e}")
     yield
 
+# --- Real async Redis client fixture for integration tests ---
+import pytest_asyncio
+import redis.asyncio as aioredis
 
-@pytest.fixture
-def mock_redis_client():
-    """Mocked RedisClient instance with patched execute_command"""
-    with patch('redis.asyncio.cluster.RedisCluster'):
-        client = RedisClient()
-        mock_execute = AsyncMock()
-        client._client.execute_command = mock_execute
-        yield client, mock_execute
+
+@pytest_asyncio.fixture(autouse=True)
+async def flush_redis(redis_client):
+    """
+    ! Flush Redis before each test for isolation
+    """
+    await redis_client.flushdb()
+
+@pytest_asyncio.fixture
+async def redis_client():
+    """
+    * Provides a real async Redis client for integration tests
+    * Uses RedisConfig for connection parameters
+    * Ensures proper cleanup after each test
+    """
+    client = aioredis.Redis(
+        host=getattr(RedisConfig, "REDIS_HOST", "127.0.0.1"),
+        port=getattr(RedisConfig, "REDIS_PORT", 6379),
+        db=getattr(RedisConfig, "REDIS_DB", 0),
+        decode_responses=True,
+    )
+    try:
+        yield client
+    finally:
+        await client.close()
+# ! This fixture is required for all integration tests using Redis
 
 @pytest.fixture
 def redis_cache():

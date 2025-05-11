@@ -4,7 +4,7 @@
 """
 import logging
 import time
-from app.core.redis.client import client as redis_client
+from app.core.redis.redis_cache import RedisCache
 
 # ! Uses atomic Lua script for token refill and consume
 # todo: Add fail-open logic and Prometheus metrics if needed
@@ -34,7 +34,7 @@ end
 """
 
 async def is_allowed_token_bucket(
-    key: str, capacity: int, refill_rate: int, interval: int
+    cache: RedisCache, key: str, capacity: int, refill_rate: int, interval: int
 ) -> bool:
     """
     * Token Bucket Rate Limiter
@@ -48,7 +48,7 @@ async def is_allowed_token_bucket(
     """
     try:
         now = int(time.time())
-        allowed = await redis_client._client.eval(
+        allowed = await cache._client.eval(
             TOKEN_BUCKET_LUA,
             1,
             key,

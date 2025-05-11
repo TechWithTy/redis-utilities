@@ -13,11 +13,10 @@ class RedisConfig:
     REDIS_SHARD_SIZE = 25 * 1024 * 1024 * 1024  # 25GB
     REDIS_SHARD_OPS_LIMIT = 25000  # ops/second
     REDIS_SHARD_NODES = [
-        {"host": "shard1", "port": 6379},
-        {"host": "shard2", "port": 6379},
+        {"host": "localhost", "port": 6379},
     ]
     # Redis connection settings
-    REDIS_HOST = getattr(settings, "REDIS_HOST", "localhost")
+    REDIS_HOST = getattr(settings, "REDIS_HOST", "127.0.0.1")
     REDIS_PORT = getattr(settings, "REDIS_PORT", 6379)
     REDIS_DB = getattr(settings, "REDIS_DB", 0)
     REDIS_PASSWORD = getattr(settings, "REDIS_PASSWORD", None)

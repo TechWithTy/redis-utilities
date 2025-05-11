@@ -4,13 +4,15 @@
 """
 import logging
 import time
-from app.core.redis.client import client as redis_client
+from app.core.redis.redis_cache import RedisCache
 
 # ! Debounce: only allow event after interval of inactivity
 # todo: Add fail-open logic and Prometheus metrics if needed
 
 
-async def is_allowed_debounce(key: str, interval: int) -> bool:
+async def is_allowed_debounce(
+    cache: RedisCache, key: str, interval: int
+) -> bool:
     """
     * Debounce: only allow event after interval of inactivity
     Args:
@@ -21,10 +23,10 @@ async def is_allowed_debounce(key: str, interval: int) -> bool:
     """
     now = int(time.time())
     try:
-        ttl = await redis_client.ttl(key)
+        ttl = await cache._client.ttl(key)
         if ttl > 0:
             return False
-        await redis_client.set(key, now, ex=interval)
+        await cache._client.set(key, now, ex=interval)
         return True
     except Exception as e:
         # ! Fail-open: If Redis is unavailable, allow the event and log a warning

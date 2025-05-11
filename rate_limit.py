@@ -70,27 +70,67 @@ return #keys
 """
 
 
+ATOMIC_RATE_LIMIT_LUA = """
+local key = KEYS[1]
+local now = tonumber(ARGV[1])
+local window = tonumber(ARGV[2]) -- window in ms
+local limit = tonumber(ARGV[3])
+local member = ARGV[4]
+redis.call('ZREMRANGEBYSCORE', key, 0, now - window)
+local count = redis.call('ZCARD', key)
+if count < limit then
+    redis.call('ZADD', key, now, member)
+    redis.call('EXPIRE', key, math.ceil(window / 1000))
+    return 1
+else
+    return 0
+end
+"""
+
 @circuit(failure_threshold=3, recovery_timeout=60)
 async def check_rate_limit(key: str, limit: int, window: int) -> bool:
     """
-    Improved sliding window rate limiting using Redis sorted sets
-    More accurate than fixed windows, better for burst protection
+    Atomic sliding window rate limiting using Redis Lua script for concurrency safety.
+    More accurate than fixed windows, better for burst protection.
+    ! Input validation for all arguments (see below)
     """
-    now = datetime.utcnow()
-    pipeline = client.pipeline()
+    # ! Validate key
+    if not key or not isinstance(key, str):
+        raise ValueError("Rate limit key must be a non-empty string")
+    # ! Validate limit
+    if not isinstance(limit, int) or limit <= 0:
+        raise ValueError("Limit must be a positive integer")
+    # ! Validate window
+    if not isinstance(window, int) or window <= 0:
+        raise ValueError("Window must be a positive integer (seconds)")
 
-    # Remove expired timestamps
-    pipeline.zremrangebyscore(key, 0, (now - timedelta(seconds=window)).timestamp())
-
-    # Count remaining requests
-    pipeline.zcard(key)
-
-    # Add current request
-    pipeline.zadd(key, {now.timestamp(): now.timestamp()})
-    pipeline.expire(key, window)
-
-    _, count, _, _ = await pipeline.execute()
-    return count >= limit
+    redis_instance = await client.get_client()  # Ensure Redis is initialized
+    if redis_instance is None:
+        logger.error("Redis unavailable in check_rate_limit: fail-closed")
+        return False
+    now = int(datetime.utcnow().timestamp() * 1000)  # ms precision
+    window_ms = window * 1000  # convert window to ms
+    logger.debug(
+        f"[check_rate_limit] EVAL args: key={key} now(ms)={now} window(ms)={window_ms} limit={limit}"
+    )
+    import uuid
+    member = f"{now}-{uuid.uuid4()}"
+    logger.debug(
+        f"[check_rate_limit] EVAL args: key={key} now(ms)={now} window(ms)={window_ms} limit={limit} member={member}"
+    )
+    try:
+        allowed = await redis_instance.eval(
+            ATOMIC_RATE_LIMIT_LUA,
+            1,  # numkeys
+            key,
+            now, window_ms, limit, member
+        )
+        logger.debug(f"[check_rate_limit] Redis eval result: {allowed} | key={key} now(ms)={now} window(ms)={window_ms} limit={limit} member={member}")
+    except Exception as e:
+        logger.error(f"[check_rate_limit] Redis eval error: {e} | key={key} now(ms)={now} window(ms)={window_ms} limit={limit} member={member}")
+        raise
+    # * Return True if allowed, False if rate-limited
+    return bool(allowed)
 
 
 async def increment_rate_limit(identifier: str, endpoint: str, window: int = 60) -> int:

@@ -18,6 +18,7 @@ from opentelemetry import trace
 from opentelemetry.trace import StatusCode
 from prometheus_client import Counter, Gauge, Histogram
 from redis.asyncio import Redis, RedisCluster
+from redis.asyncio.cluster import ClusterNode
 from redis.exceptions import RedisError, TimeoutError
 
 from app.core.redis.config import RedisConfig
@@ -112,32 +113,70 @@ class RedisClient:
         Returns configured client based on settings
         - Auto-reconnects if needed
         - Supports both cluster and sharded modes
+        - Falls back to standalone Redis if cluster mode is not enabled
         """
-        if self._cluster_mode:
-            return await self._get_cluster_client()
-        return await self._get_sharded_client()
-
-    async def _get_cluster_client(self) -> RedisCluster:
-        """Get a cluster Redis client based on configuration"""
         if not self._client:
-            if REDIS_URL:
-                self._client = RedisCluster.from_url(
-                    REDIS_URL,
-                    ssl=REDIS_SSL,
-                    ssl_cert_reqs=REDIS_SSL_CERT_REQS,
-                    ssl_ca_certs=REDIS_SSL_CA_CERTS,
-                    ssl_keyfile=REDIS_SSL_KEYFILE,
-                    ssl_certfile=REDIS_SSL_CERTFILE,
-                    protocol=REDIS_PROTOCOL,
-                    username=REDIS_USERNAME,
-                    password=REDIS_PASSWORD,
-                    db=REDIS_DB,
-                    max_connections=REDIS_MAX_CONNECTIONS,
-                    socket_timeout=REDIS_SOCKET_TIMEOUT,
-                    socket_connect_timeout=REDIS_SOCKET_CONNECT_TIMEOUT,
-                )
+            if self._cluster_mode:
+                try:
+                    if REDIS_URL:
+                        self._client = RedisCluster.from_url(
+                            REDIS_URL,
+                            ssl=REDIS_SSL,
+                            ssl_cert_reqs=REDIS_SSL_CERT_REQS,
+                            ssl_ca_certs=REDIS_SSL_CA_CERTS,
+                            ssl_keyfile=REDIS_SSL_KEYFILE,
+                            ssl_certfile=REDIS_SSL_CERTFILE,
+                            protocol=REDIS_PROTOCOL,
+                            username=REDIS_USERNAME,
+                            password=REDIS_PASSWORD,
+                            db=REDIS_DB,
+                            max_connections=REDIS_MAX_CONNECTIONS,
+                            socket_timeout=REDIS_SOCKET_TIMEOUT,
+                            socket_connect_timeout=REDIS_SOCKET_CONNECT_TIMEOUT,
+                        )
+                    else:
+                        startup_nodes = [ClusterNode(node["host"], node["port"]) for node in RedisConfig.REDIS_SHARD_NODES]
+                        self._client = RedisCluster(
+                            startup_nodes=startup_nodes,
+                            username=REDIS_USERNAME,
+                            password=REDIS_PASSWORD,
+                            db=REDIS_DB,
+                            ssl=REDIS_SSL,
+                            ssl_cert_reqs=REDIS_SSL_CERT_REQS,
+                            ssl_ca_certs=REDIS_SSL_CA_CERTS,
+                            ssl_keyfile=REDIS_SSL_KEYFILE,
+                            ssl_certfile=REDIS_SSL_CERTFILE,
+                            protocol=REDIS_PROTOCOL,
+                        )
+                    # Try a simple command to trigger cluster check
+                    await self._client.ping()
+                except Exception as e:
+                    # ! Import here to avoid top-level import issues if cluster extras aren't installed
+                    try:
+                        from redis.exceptions import RedisClusterException
+                    except ImportError:
+                        RedisClusterException = type("RedisClusterException", (Exception,), {})
+                    if isinstance(e, RedisClusterException) or (
+                        hasattr(e, 'args') and e.args and 'cluster mode is not enabled' in str(e.args[0]).lower()
+                    ):
+                        logger.warning("Cluster mode not enabled, falling back to standalone Redis: %s", e)
+                        self._client = Redis(
+                            host=REDIS_HOST,
+                            port=REDIS_PORT,
+                            username=REDIS_USERNAME,
+                            password=REDIS_PASSWORD,
+                            db=REDIS_DB,
+                            ssl=REDIS_SSL,
+                            ssl_cert_reqs=REDIS_SSL_CERT_REQS,
+                            ssl_ca_certs=REDIS_SSL_CA_CERTS,
+                            ssl_keyfile=REDIS_SSL_KEYFILE,
+                            ssl_certfile=REDIS_SSL_CERTFILE,
+                            protocol=REDIS_PROTOCOL,
+                        )
+                    else:
+                        raise
             else:
-                self._client = RedisCluster(
+                self._client = Redis(
                     host=REDIS_HOST,
                     port=REDIS_PORT,
                     username=REDIS_USERNAME,
@@ -149,51 +188,16 @@ class RedisClient:
                     ssl_keyfile=REDIS_SSL_KEYFILE,
                     ssl_certfile=REDIS_SSL_CERTFILE,
                     protocol=REDIS_PROTOCOL,
-                    max_connections=REDIS_MAX_CONNECTIONS,
-                    socket_timeout=REDIS_SOCKET_TIMEOUT,
-                    socket_connect_timeout=REDIS_SOCKET_CONNECT_TIMEOUT,
                 )
         return self._client
 
-    async def _get_sharded_client(self) -> RedisCluster:
-        """Get a Redis client configured for sharded mode"""
-        from redis.asyncio.cluster import RedisCluster
-        if REDIS_URL:
-            return RedisCluster.from_url(
-                REDIS_URL,
-                ssl=REDIS_SSL,
-                ssl_cert_reqs=REDIS_SSL_CERT_REQS,
-                ssl_ca_certs=REDIS_SSL_CA_CERTS,
-                ssl_keyfile=REDIS_SSL_KEYFILE,
-                ssl_certfile=REDIS_SSL_CERTFILE,
-                protocol=REDIS_PROTOCOL,
-                username=REDIS_USERNAME,
-                password=REDIS_PASSWORD,
-                db=REDIS_DB,
-                max_connections=REDIS_MAX_CONNECTIONS,
-                socket_timeout=REDIS_SOCKET_TIMEOUT,
-                socket_connect_timeout=REDIS_SOCKET_CONNECT_TIMEOUT,
-                decode_responses=True
-            )
-        return RedisCluster(
-            startup_nodes=[
-                {"host": REDIS_HOST, "port": REDIS_PORT}
-            ],
-            username=REDIS_USERNAME,
-            password=REDIS_PASSWORD,
-            db=REDIS_DB,
-            ssl=REDIS_SSL,
-            ssl_cert_reqs=REDIS_SSL_CERT_REQS,
-            ssl_ca_certs=REDIS_SSL_CA_CERTS,
-            ssl_keyfile=REDIS_SSL_KEYFILE,
-            ssl_certfile=REDIS_SSL_CERTFILE,
-            protocol=REDIS_PROTOCOL,
-            # max_connections_per_node is not supported in all redis-py versions, use max_connections if available
-        # max_connections=REDIS_MAX_CONNECTIONS,
-            socket_timeout=REDIS_SOCKET_TIMEOUT,
-            socket_connect_timeout=REDIS_SOCKET_CONNECT_TIMEOUT,
-            decode_responses=True
-        )
+    def pipeline(self, *args, **kwargs):
+        """
+        Return a pipeline object from the underlying Redis client.
+        """
+        if not self._client:
+            raise RuntimeError("Redis client not initialized. Call await get_client() first.")
+        return self._client.pipeline(*args, **kwargs)
 
     async def shutdown(self):
         """Cleanly shutdown Redis client"""
@@ -244,7 +248,7 @@ class RedisClient:
             span.set_attributes({"redis.key": key, "redis.ttl": ex or 0})
             try:
                 result = await (await self.get_client()).set(
-                    key, json.dumps(value), ex=ex, timeout=timeout
+                    key, json.dumps(value), ex=ex
                 )
                 span.set_status(StatusCode.OK)
                 return result

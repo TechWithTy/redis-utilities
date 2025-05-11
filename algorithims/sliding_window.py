@@ -4,24 +4,28 @@
 """
 import logging
 import time
-from app.core.redis.client import client as redis_client
+from app.core.redis.redis_cache import RedisCache
 
 # ! Uses Redis sorted sets for timestamped requests
 
-async def is_allowed_sliding_window(key: str, limit: int, window: int) -> bool:
+async def is_allowed_sliding_window(
+    cache: RedisCache, key: str, limit: int, window: int
+) -> bool:
     """
-    * Sliding Window Rate Limiter
+    * Sliding Window Rate Limiter (DI version)
     Args:
+        cache (RedisCache): Injected RedisCache instance
         key (str): Unique identifier for the rate limit (user ID, IP, etc.)
         limit (int): Max allowed requests per window
         window (int): Window size in seconds
     Returns:
         bool: True if allowed, False if rate limited
     """
+    import time
     try:
         now = int(time.time())
         min_score = now - window
-        p = redis_client._client.pipeline()
+        p = cache._client.pipeline()
         p.zremrangebyscore(key, 0, min_score)
         p.zadd(key, {str(now): now})
         p.zcard(key)
@@ -29,6 +33,7 @@ async def is_allowed_sliding_window(key: str, limit: int, window: int) -> bool:
         _, _, count, _ = await p.execute()
         return count <= limit
     except Exception as e:
-        # ! Fail-open: If Redis is unavailable, allow the event and log a warning
+        import logging
         logging.warning(f"[sliding_window] Redis unavailable, allowing event (fail-open): {e}")
         return True
+

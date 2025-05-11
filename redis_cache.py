@@ -13,10 +13,9 @@ import logging
 from collections.abc import Callable
 from functools import wraps
 from typing import Any, Optional
-
+import asyncio
 from opentelemetry import trace
-from redis import Redis
-from redis.exceptions import RedisError, TimeoutError
+from redis import asyncio  # ! Needed for coroutine detection
 
 from app.core.prometheus.metrics import (
     get_redis_cache_deletes,
@@ -30,6 +29,16 @@ logger = logging.getLogger(__name__)
 
 
 class RedisCache:
+    """
+    Async Redis cache utility supporting dependency injection of a redis.asyncio.Redis client.
+    All cache operations are performed using the provided async client.
+    """
+    def __init__(self, client):
+        # ! Accepts an async Redis client (redis.asyncio.Redis)
+        self._client = client
+        self.stats: dict[str, int] = {"hits": 0, "misses": 0, "sets": 0, "deletes": 0}
+        self.tracer = trace.get_tracer(__name__)
+
     async def get_or_set(self, key: str, value_fn, ttl: int | None = None):
         """
         Atomically get or set a cache value. If the key is missing, compute and set it.
@@ -56,17 +65,14 @@ class RedisCache:
             logger.error(f"get_or_set failed for key {key}: {str(e)}")
             raise
 
-    def __init__(self):
-        """Initialize Redis connection"""
-        self._client = Redis(host=RedisConfig.REDIS_HOST, port=RedisConfig.REDIS_PORT, db=RedisConfig.REDIS_DB)
-        self.tracer = trace.get_tracer(__name__)
-        self.stats = {"hits": 0, "misses": 0, "sets": 0, "deletes": 0}
-
     async def get(self, key: str) -> Any | None:
         """Get cached value with stats tracking"""
         with self.tracer.start_as_current_span("redis_cache.get"):
             try:
-                value = self._client.get(key)
+                value = await self._client.get(key)
+                # * Always decode bytes to string for consistency
+                if isinstance(value, bytes):
+                    value = value.decode()
                 if value:
                     self.stats["hits"] += 1
                     get_redis_cache_hits().inc()
@@ -74,7 +80,7 @@ class RedisCache:
                 self.stats["misses"] += 1
                 get_redis_cache_misses().inc()
                 return None
-            except (RedisError, TimeoutError) as e:
+            except Exception as e:
                 logger.error(f"Cache get failed for key {key}: {str(e)}")
                 raise
 
@@ -89,8 +95,8 @@ class RedisCache:
             self.stats["sets"] += 1
             get_redis_cache_sets().inc()
             try:
-                return self._client.set(key, value, ex=ttl)
-            except (RedisError, TimeoutError) as e:
+                return await self._client.set(key, value, ex=ttl)
+            except Exception as e:
                 logger.error(f"Cache set failed for key {key}: {str(e)}")
                 raise
 
@@ -98,7 +104,7 @@ class RedisCache:
         """Delete cached value"""
         self.stats["deletes"] += 1
         get_redis_cache_deletes().inc()
-        return self._client.delete(key)
+        return await self._client.delete(key)
 
     def get_stats(self) -> dict:
         """Get cache statistics"""
@@ -106,9 +112,9 @@ class RedisCache:
 
     async def flush_namespace(self, namespace: str) -> int:
         """Flush all keys in a namespace"""
-        keys = self._client.keys(f"{namespace}:*")
+        keys = await self._client.keys(f"{namespace}:*")
         if keys:
-            deleted = self._client.delete(*keys)
+            deleted = await self._client.delete(*keys)
             self.stats["deletes"] += deleted
             get_redis_cache_deletes().inc(deleted)
             return deleted
@@ -119,67 +125,65 @@ class RedisCache:
         pipeline = self._client.pipeline()
         for key in keys:
             pipeline.get(key)
-        pipeline.execute()
+        await pipeline.execute()
 
-# Global Redis cache instance with auto-recovery
-redis_cache = RedisCache()
+# ! Global RedisCache singleton removed.
+# Use dependency injection: instantiate RedisCache with an async Redis client where needed.
+# Example:
+# import redis.asyncio as aioredis
+# redis_client = aioredis.from_url("redis://localhost:6379/0")
+# cache = RedisCache(redis_client)
 
 
-def get_redis_cache() -> RedisCache:
+# ! get_redis_cache removed: Use DI and pass a RedisCache instance explicitly.
+
+
+async def get_cached_result(cache: RedisCache, key: str, default: Any = None) -> Any:
     """
-    Get the global Redis cache instance with:
-    - Circuit breaking
-    - Tracing
-    - Cluster support
-    """
-    return redis_cache
-
-
-async def get_cached_result(key: str, default: Any = None) -> Any:
-    """
-    Get a result from the Redis cache.
-
+    Get a result from the Redis cache. Requires a RedisCache instance.
     Args:
+        cache: RedisCache instance
         key: The cache key to retrieve
         default: Value to return if key is not found (default: None)
-
     Returns:
         The cached value or the default value if not found
     """
     try:
-        value = await redis_cache.get(key)
+        value = await cache.get(key)
         if value is None:
             return default
         return value
     except Exception as e:
-        logger.warning(f"Error retrieving from Redis cache: {str(e)}")
+        logger.error(f"get_cached_result failed for key {key}: {str(e)}")
         return default
 
 
-async def invalidate_cache(key: str) -> bool:
+async def invalidate_cache(cache: RedisCache, key: str) -> bool:
     """
-    Invalidate a specific cache key in Redis.
+    Invalidate a specific cache key in Redis. Requires a RedisCache instance.
 
     Args:
+        cache: RedisCache instance
         key: The cache key to invalidate
 
     Returns:
         True if the key was found and deleted, False otherwise
     """
     try:
-        return bool(await redis_cache.delete(key))
+        return bool(await cache.delete(key))
     except Exception as e:
         logger.warning(f"Error invalidating Redis cache: {str(e)}")
         return False
 
 
 async def get_or_set_cache(
-    key: str, func: Callable[[], Any], expire_seconds: int | None
+    cache: RedisCache, key: str, func: Callable[[], Any], expire_seconds: int | None
 ) -> Any:
     """
-    Get a value from Redis, or compute and store it if not found.
+    Get a value from Redis, or compute and store it if not found. Requires a RedisCache instance.
 
     Args:
+        cache: RedisCache instance
         key: The cache key to retrieve or store
         func: Function to call if the key is not in the cache
         expire_seconds: Optional cache expiration in seconds
@@ -188,29 +192,30 @@ async def get_or_set_cache(
         The cached or computed value
     """
     try:
-        value = await redis_cache.get(key)
+        value = await cache.get(key)
         if value is not None:
             return value
-        result = func()
-        await redis_cache.set(key, result, expire_seconds)
+        result = await func() if asyncio.iscoroutinefunction(func) else func()
+        await cache.set(key, result, expire_seconds)
         return result
     except Exception as e:
         logger.error(f"Error computing or caching result in Redis: {str(e)}")
         raise
 
 
-def cache_result(expire_seconds: int | None, key_prefix: str = ""):
+def cache_result(cache: RedisCache, expire_seconds: int | None, key_prefix: str = ""):
     """
     Decorator that caches the result of a function based on its arguments using Redis.
+    Requires a RedisCache instance (DI pattern).
 
     Args:
+        cache: RedisCache instance
         expire_seconds: Optional cache expiration in seconds
         key_prefix: Optional prefix for the cache key
 
     Returns:
         Decorated function that uses Redis caching
     """
-
     def decorator(func: Callable[..., Any]) -> Callable[..., Any]:
         @wraps(func)
         async def wrapper(*args, **kwargs):
@@ -219,9 +224,7 @@ def cache_result(expire_seconds: int | None, key_prefix: str = ""):
             raw_key = f"{key_prefix}:{func.__name__}:{key_args}:{key_kwargs}"
             key = hashlib.md5(raw_key.encode()).hexdigest()
             return await get_or_set_cache(
-                key, lambda: func(*args, **kwargs), expire_seconds
+                cache, key, lambda: func(*args, **kwargs), expire_seconds
             )
-
         return wrapper
-
     return decorator

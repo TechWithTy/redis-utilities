@@ -4,12 +4,14 @@
 """
 import logging
 import time
-from app.core.redis.client import client as redis_client
+from app.core.redis.redis_cache import RedisCache
 
 # ! Throttle: allow one event per interval
 # todo: Add fail-open logic and Prometheus metrics if needed
 
-async def is_allowed_throttle(key: str, interval: int) -> bool:
+async def is_allowed_throttle(
+    cache: RedisCache, key: str, interval: int
+) -> bool:
     """
     * Throttle: allow only one event per interval
     Args:
@@ -20,9 +22,9 @@ async def is_allowed_throttle(key: str, interval: int) -> bool:
     """
     try:
         now = int(time.time())
-        result = await redis_client._client.setnx(key, now)
+        result = await cache._client.setnx(key, now)
         if result:
-            await redis_client.expire(key, interval)
+            await cache._client.expire(key, interval)
             return True
         return False
     except Exception as e:
