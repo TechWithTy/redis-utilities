@@ -31,10 +31,8 @@ async def test_shard_distribution(redis_client: aioredis.Redis):
         keys = await redis_client.keys(f"test_dist_{test_id}_*")
         assert len(keys) == 1000
         duration = (datetime.now() - start_time).total_seconds()
-        record_metrics(
-            "redis_sharding_distribution",
-            {"keys": 1000, "duration": duration}
-        )
+        record_metrics("redis_sharding_distribution_keys", 1000)
+        record_metrics("redis_sharding_distribution_duration", duration)
     except Exception as e:
         logger.error(f"Shard distribution test failed: {type(e).__name__}: {e}")
         raise
@@ -102,10 +100,8 @@ async def test_shard_performance_under_load(redis_client: aioredis.Redis):
         duration = (datetime.now() - start_time).total_seconds()
         logger.info(f"Set {NUM_KEYS} keys concurrently in {duration:.2f}s")
         assert duration < 4.0  # Adjust threshold for cross-platform reliability
-        record_metrics(
-            "redis_sharding_load_test",
-            {"operations": NUM_KEYS, "duration": duration}
-        )
+        record_metrics("redis_sharding_load_test_operations", NUM_KEYS)
+        record_metrics("redis_sharding_load_test_duration", duration)
         # Optionally, verify a few keys
         for i in range(0, NUM_KEYS, 50):
             val = await redis_client.get(f"load_{test_id}_{i}")
