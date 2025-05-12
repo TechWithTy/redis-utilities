@@ -33,10 +33,14 @@ def get_rate_limit_gauge():
     return get_rate_limit_gauge._metric
 
 from app.core.redis.client import RedisClient
-from app.core.third_party_integrations.supabase_home.sdk.auth import (
-    SupabaseAuthService,
-)
-from app.core.third_party_integrations.supabase_home._client import get_supabase_client
+from app.core.third_party_integrations.supabase_home.app import SupabaseAuthService
+from app.core.third_party_integrations.supabase_home.client import get_supabase_client
+
+async def get_auth_service():
+    client = await get_supabase_client()
+    service = SupabaseAuthService(client)
+    user = await service.get_current_user() if hasattr(service.get_current_user, '__await__') else service.get_current_user()
+    return user
 
 logger = logging.getLogger(__name__)
 

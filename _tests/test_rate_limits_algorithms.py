@@ -23,11 +23,11 @@ import asyncio
 import pytest
 import uuid
 
-from app.core.redis.algorithims.debounce import is_allowed_debounce
-from app.core.redis.algorithims.fixed_window import is_allowed_fixed_window
-from app.core.redis.algorithims.sliding_window import is_allowed_sliding_window
-from app.core.redis.algorithims.throttle import is_allowed_throttle
-from app.core.redis.algorithims.token_bucket import is_allowed_token_bucket
+from app.core.redis.algorithims.rate_limiting.debounce import is_allowed_debounce
+from app.core.redis.algorithims.rate_limiting.fixed_window import is_allowed_fixed_window
+from app.core.redis.algorithims.rate_limiting.sliding_window import is_allowed_sliding_window
+from app.core.redis.algorithims.rate_limiting.throttle import is_allowed_throttle
+from app.core.redis.algorithims.rate_limiting.token_bucket import is_allowed_token_bucket
 from app.core.redis.redis_cache import RedisCache
 
 pytestmark = pytest.mark.asyncio

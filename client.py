@@ -223,7 +223,7 @@ class RedisClient:
         with tracer.start_as_current_span("redis.get") as span:
             span.set_attribute("redis.key", key)
             try:
-                value = await (await self.get_client()).get(key, timeout=timeout)
+                value = await (await self.get_client()).get(key)
                 span.set_status(StatusCode.OK)
                 return json.loads(value) if value else None
             except Exception as e:
@@ -260,7 +260,7 @@ class RedisClient:
     async def delete(self, *keys: str, timeout: float = DEFAULT_COMMAND_TIMEOUT) -> int:
         """Delete one or more keys from Redis with timeout"""
         try:
-            return await (await self.get_client()).delete(*keys, timeout=timeout)
+            return await (await self.get_client()).delete(*keys)
         except (RedisError, TimeoutError) as e:
             logger.error(f"Redis delete failed for keys {keys}: {str(e)}")
             raise
@@ -340,6 +340,31 @@ class RedisClient:
             except Exception as e:
                 span.record_exception(e)
                 span.set_status(StatusCode.ERROR)
+                raise
+
+    async def scan(self, pattern: str, count: int = 1000, timeout: float = DEFAULT_COMMAND_TIMEOUT) -> list[str]:
+        """
+        Asynchronously scan for keys matching a pattern.
+        Uses SCAN for safety (never KEYS in production).
+        Returns a list of matching keys (decoded to str).
+        """
+        with tracer.start_as_current_span("redis.scan") as span:
+            span.set_attribute("redis.pattern", pattern)
+            try:
+                client = await self.get_client()
+                cursor = 0
+                keys = []
+                while True:
+                    cursor, batch = await client.scan(cursor=cursor, match=pattern, count=count)
+                    keys.extend(k.decode() if isinstance(k, bytes) else k for k in batch)
+                    if cursor == 0:
+                        break
+                span.set_status(StatusCode.OK)
+                return keys
+            except Exception as e:
+                span.record_exception(e)
+                span.set_status(StatusCode.ERROR)
+                logger.error(f"Redis scan failed for pattern {pattern}: {str(e)}")
                 raise
 
 

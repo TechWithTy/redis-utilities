@@ -7,7 +7,7 @@ import random
 from collections.abc import Callable, Coroutine
 from typing import Any, TypeVar
 
-from prometheus_client import Counter
+from prometheus_client import Counter, REGISTRY
 
 from app.core.redis.client import RedisClient
 from app.core.redis.config import RedisConfig
@@ -15,10 +15,16 @@ from app.core.redis.config import RedisConfig
 logger = logging.getLogger(__name__)
 
 # Metrics
-CACHE_HITS = Counter("cache_hits", "Number of cache hits", ["key_pattern"])
-CACHE_INVALIDATIONS = Counter(
-    "cache_invalidations", "Number of cache invalidations", ["pattern"]
-)
+try:
+    CACHE_HITS = Counter("cache_hits", "Number of cache hits", ["key_pattern"])
+except ValueError:
+    # * Already registered (e.g., during tests or reloads)
+    CACHE_HITS = REGISTRY._names_to_collectors["cache_hits"]
+
+try:
+    CACHE_INVALIDATIONS = Counter("cache_invalidations", "Number of cache invalidations", ["pattern"])
+except ValueError:
+    CACHE_INVALIDATIONS = REGISTRY._names_to_collectors["cache_invalidations"]
 
 
 async def get_redis_client() -> RedisClient:
