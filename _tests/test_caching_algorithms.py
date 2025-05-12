@@ -1,11 +1,12 @@
 import pytest
 import pytest_asyncio
-from app.core.redis.client import client as redis_client
+from app.core.redis.client import RedisClient
 
 @pytest_asyncio.fixture
 async def redis_client_fixture():
-    # If your Redis client needs async setup, you can do it here
-    yield redis_client
+    client = RedisClient()
+    yield client
+    await client.shutdown()
 
 # ! WARNING: For cache eviction tests to work as expected, you must configure your Valkey/Redis instance
 # ! with a low maxmemory (e.g., 1mb) and an eviction policy (e.g., volatile-lru, volatile-lfu, volatile-ttl).

@@ -212,6 +212,65 @@ class RedisClient:
             raise ConnectionError("Redis connection failed")
         self._metrics_task = asyncio.create_task(self._update_metrics())
 
+    # --- Redis List Command Passthroughs ---
+    async def lrem(self, key: str, count: int, value: str) -> int:
+        """
+        Remove elements from a list (left to right) matching value.
+        Args:
+            key: Redis list key
+            count: Number of occurrences to remove (0 = all)
+            value: Value to remove
+        Returns:
+            Number of removed elements
+        """
+        client = await self.get_client()
+        return await client.lrem(key, count, value)
+
+    async def rpush(self, key: str, value: str) -> int:
+        """
+        Append a value to the end of a list.
+        Args:
+            key: Redis list key
+            value: Value to append
+        Returns:
+            Length of the list after push
+        """
+        client = await self.get_client()
+        return await client.rpush(key, value)
+
+    async def lpop(self, key: str) -> str | None:
+        """
+        Remove and return the first element of the list.
+        Args:
+            key: Redis list key
+        Returns:
+            The value, or None if list is empty
+        """
+        client = await self.get_client()
+        return await client.lpop(key)
+
+    async def rpop(self, key: str) -> str | None:
+        """
+        Remove and return the last element of the list.
+        Args:
+            key: Redis list key
+        Returns:
+            The value, or None if list is empty
+        """
+        client = await self.get_client()
+        return await client.rpop(key)
+
+    async def llen(self, key: str) -> int:
+        """
+        Get the length of a list.
+        Args:
+            key: Redis list key
+        Returns:
+            Length of the list
+        """
+        client = await self.get_client()
+        return await client.llen(key)
+
     @circuit(
         failure_threshold=REDIS_FAILURE_THRESHOLD,
         recovery_timeout=REDIS_RECOVERY_TIMEOUT,
